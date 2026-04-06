@@ -17,11 +17,13 @@ bear create "hello" --title "CLI test" --tag rust
 
 - macOS
 - Bear.app installed
-- local access to Bear's database at:
+- local access to Bear's database under a Bear group container such as:
 
 ```text
-~/Library/Group Containers/9K33E3U3T4.net.shinyfrog.bear/Application Data/database.sqlite
+~/Library/Group Containers/<TEAM_ID>.net.shinyfrog.bear/Application Data/database.sqlite
 ```
+
+By default `bear-cli` discovers this dynamically. You only need `--database` or `BEAR_DATABASE` if you want to override it.
 
 ## Installation
 

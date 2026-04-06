@@ -2,8 +2,6 @@ use std::path::PathBuf;
 
 use clap::{Args, Parser, Subcommand};
 
-use crate::config::DEFAULT_DATABASE_PATH;
-
 #[derive(Parser, Debug)]
 #[command(name = "bear")]
 #[command(about = "Rust CLI for Bear.app on macOS", version)]
@@ -12,10 +10,9 @@ pub struct Cli {
         long,
         global = true,
         env = "BEAR_DATABASE",
-        default_value = DEFAULT_DATABASE_PATH,
-        help = "Path to Bear's macOS SQLite database"
+        help = "Path to Bear's macOS SQLite database. If omitted, bear-cli discovers it dynamically."
     )]
-    pub database: String,
+    pub database: Option<String>,
 
     #[command(subcommand)]
     pub command: Commands,

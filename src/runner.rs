@@ -4,7 +4,7 @@ use clap::Parser;
 use crate::bear::{join_tags, maybe_push, maybe_push_bool, open_bear_action};
 use crate::cli::Cli;
 use crate::cli::Commands;
-use crate::config::{encode_file, expand_tilde, load_token, save_token};
+use crate::config::{encode_file, load_token, resolve_database_path, save_token};
 use crate::db::BearDb;
 
 pub fn run() -> Result<()> {
@@ -17,7 +17,9 @@ pub fn run() -> Result<()> {
         | Commands::Untagged(_)
         | Commands::Todo(_)
         | Commands::Today(_)
-        | Commands::Locked(_) => Some(BearDb::open(expand_tilde(&cli.database)?)?),
+        | Commands::Locked(_) => Some(BearDb::open(resolve_database_path(
+            cli.database.as_deref(),
+        )?)?),
         _ => None,
     };
 
