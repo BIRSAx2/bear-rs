@@ -27,6 +27,7 @@ pub enum Commands {
     Search(SearchCommand),
     Duplicates(DuplicatesCommand),
     Stats(StatsCommand),
+    Health(HealthCommand),
     Untagged(FilterCommand),
     Todo(FilterCommand),
     Today(FilterCommand),
@@ -77,6 +78,12 @@ pub struct DuplicatesCommand {
 
 #[derive(Args, Debug)]
 pub struct StatsCommand {
+    #[arg(long, default_value_t = false)]
+    pub json: bool,
+}
+
+#[derive(Args, Debug)]
+pub struct HealthCommand {
     #[arg(long, default_value_t = false)]
     pub json: bool,
 }

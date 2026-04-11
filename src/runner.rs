@@ -16,6 +16,7 @@ pub fn run() -> Result<()> {
         | Commands::Search(_)
         | Commands::Duplicates(_)
         | Commands::Stats(_)
+        | Commands::Health(_)
         | Commands::Untagged(_)
         | Commands::Todo(_)
         | Commands::Today(_)
@@ -147,6 +148,51 @@ pub fn run() -> Result<()> {
                         println!("  #{}: {}", tag, count);
                     }
                 }
+            }
+        }
+        Commands::Health(cmd) => {
+            let summary = db
+                .as_ref()
+                .expect("db available for read command")
+                .health_summary()?;
+
+            if cmd.json {
+                let output = serde_json::json!({
+                    "totalNotes": summary.total_notes,
+                    "duplicateGroups": summary.duplicate_groups,
+                    "duplicateNotes": summary.duplicate_notes,
+                    "emptyNotes": summary.empty_notes.iter().map(|note| serde_json::json!({
+                        "id": note.identifier,
+                        "title": note.title,
+                    })).collect::<Vec<_>>(),
+                    "untaggedNotes": summary.untagged_notes,
+                    "oldTrashedNotes": summary.old_trashed_notes.iter().map(|note| serde_json::json!({
+                        "id": note.identifier,
+                        "title": note.title,
+                    })).collect::<Vec<_>>(),
+                    "largeNotes": summary.large_notes.iter().map(|note| serde_json::json!({
+                        "id": note.identifier,
+                        "title": note.title,
+                        "sizeBytes": note.size_bytes,
+                    })).collect::<Vec<_>>(),
+                    "conflictNotes": summary.conflict_notes.iter().map(|note| serde_json::json!({
+                        "id": note.identifier,
+                        "title": note.title,
+                    })).collect::<Vec<_>>(),
+                });
+                println!("{}", serde_json::to_string_pretty(&output)?);
+            } else {
+                println!("Bear health report\n");
+                println!(
+                    "{} duplicate title group(s) covering {} note(s)",
+                    summary.duplicate_groups, summary.duplicate_notes
+                );
+                println!("{} empty note(s)", summary.empty_notes.len());
+                println!("{} untagged note(s)", summary.untagged_notes);
+                println!("{} old trashed note(s)", summary.old_trashed_notes.len());
+                println!("{} large note(s)", summary.large_notes.len());
+                println!("{} conflict-looking note(s)", summary.conflict_notes.len());
+                println!("\n{} active note(s) checked", summary.total_notes);
             }
         }
         Commands::Untagged(cmd) => {

@@ -41,6 +41,31 @@ pub struct StatsSummary {
     pub top_tags: Vec<(String, usize)>,
 }
 
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct HealthNoteIssue {
+    pub identifier: String,
+    pub title: String,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct LargeNoteIssue {
+    pub identifier: String,
+    pub title: String,
+    pub size_bytes: usize,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct HealthSummary {
+    pub total_notes: usize,
+    pub duplicate_groups: usize,
+    pub duplicate_notes: usize,
+    pub empty_notes: Vec<HealthNoteIssue>,
+    pub untagged_notes: usize,
+    pub old_trashed_notes: Vec<HealthNoteIssue>,
+    pub large_notes: Vec<LargeNoteIssue>,
+    pub conflict_notes: Vec<HealthNoteIssue>,
+}
+
 pub struct BearDb {
     connection: Connection,
 }
@@ -372,6 +397,113 @@ impl BearDb {
         })
     }
 
+    pub fn health_summary(&self) -> Result<HealthSummary> {
+        const OLD_TRASH_THRESHOLD: i64 = 30;
+        const LARGE_NOTE_THRESHOLD_BYTES: usize = 100_000;
+
+        let mut stmt = self.connection.prepare(
+            "select ZUNIQUEIDENTIFIER, coalesce(ZTITLE, ''), coalesce(ZTEXT, ''), ZTRASHED, ZARCHIVED, ZMODIFICATIONDATE
+             from ZSFNOTE
+             where ZPERMANENTLYDELETED = 0
+               and ZENCRYPTED = 0
+               and ZLOCKED = 0",
+        )?;
+
+        let rows = stmt.query_map([], |row| {
+            Ok((
+                row.get::<_, String>(0)?,
+                row.get::<_, String>(1)?,
+                row.get::<_, String>(2)?,
+                row.get::<_, i64>(3)?,
+                row.get::<_, i64>(4)?,
+                row.get::<_, Option<f64>>(5)?,
+            ))
+        })?;
+
+        let duplicate_groups = self.duplicate_titles()?;
+        let note_tags = self.note_tag_map()?;
+
+        let mut total_notes = 0usize;
+        let mut empty_notes = Vec::new();
+        let mut untagged_notes = 0usize;
+        let mut old_trashed_notes = Vec::new();
+        let mut large_notes = Vec::new();
+        let mut conflict_notes = Vec::new();
+        let mut max_modified = 0i64;
+
+        let mut rows_cache = Vec::new();
+        for row in rows {
+            let row = row?;
+            if let Some(modified_at) = row.5.map(|value| value as i64) {
+                max_modified = max_modified.max(modified_at);
+            }
+            rows_cache.push(row);
+        }
+
+        for (identifier, title, text, trashed, archived, modified_at) in rows_cache {
+            let display_title = if title.trim().is_empty() {
+                "(untitled)".to_string()
+            } else {
+                title.trim().to_string()
+            };
+
+            if trashed == 0 {
+                total_notes += 1;
+
+                if text.trim().is_empty() {
+                    empty_notes.push(HealthNoteIssue {
+                        identifier: identifier.clone(),
+                        title: display_title.clone(),
+                    });
+                }
+
+                if !note_tags
+                    .get(&identifier)
+                    .map(|tags| !tags.is_empty())
+                    .unwrap_or(false)
+                {
+                    untagged_notes += 1;
+                }
+
+                let size_bytes = text.len();
+                if size_bytes >= LARGE_NOTE_THRESHOLD_BYTES {
+                    large_notes.push(LargeNoteIssue {
+                        identifier: identifier.clone(),
+                        title: display_title.clone(),
+                        size_bytes,
+                    });
+                }
+
+                let lower_title = display_title.to_lowercase();
+                if lower_title.contains("conflict") || lower_title.contains("copy") {
+                    conflict_notes.push(HealthNoteIssue {
+                        identifier,
+                        title: display_title,
+                    });
+                }
+            } else if archived == 0 {
+                let modified_at = modified_at.map(|value| value as i64).unwrap_or_default();
+                if max_modified.saturating_sub(modified_at) >= OLD_TRASH_THRESHOLD {
+                    old_trashed_notes.push(HealthNoteIssue {
+                        identifier,
+                        title: display_title,
+                    });
+                }
+            }
+        }
+
+        Ok(HealthSummary {
+            total_notes,
+            duplicate_groups: duplicate_groups.len(),
+            duplicate_notes: duplicate_groups.iter().map(|group| group.notes.len()).sum(),
+            empty_notes,
+            untagged_notes,
+            old_trashed_notes,
+            large_notes,
+            conflict_notes,
+        })
+    }
+
     pub fn untagged(&self, search: Option<&str>) -> Result<Vec<NoteListItem>> {
         let like = format!("%{}%", search.unwrap_or_default());
         let mut stmt = self.connection.prepare(
@@ -494,7 +626,10 @@ impl BearDb {
 mod tests {
     use rusqlite::Connection;
 
-    use super::{BearDb, DuplicateGroup, DuplicateNote, NoteListItem, StatsSummary};
+    use super::{
+        BearDb, DuplicateGroup, DuplicateNote, HealthNoteIssue, HealthSummary, NoteListItem,
+        StatsSummary,
+    };
 
     fn test_db() -> BearDb {
         let connection = Connection::open_in_memory().expect("in-memory db");
@@ -528,9 +663,10 @@ mod tests {
                 insert into ZSFNOTE values
                     (1, 0, 0, 1, 0, 0, 0, 1, 1, 10, 'Alpha', 'alpha body - [ ]', 'NOTE-1'),
                     (2, 0, 1, 0, 0, 0, 0, 0, 0, 20, 'Beta', 'beta body', 'NOTE-2'),
-                    (3, 1, 0, 0, 0, 0, 0, 0, 0, 30, 'Trash', 'trashed', 'NOTE-3'),
+                    (3, 1, 0, 0, 0, 0, 0, 0, 0, 1, 'Trash', 'trashed', 'NOTE-3'),
                     (4, 0, 0, 0, 0, 0, 0, 0, 0, 40, 'Alpha', 'another alpha', 'NOTE-4'),
-                    (5, 0, 0, 0, 0, 0, 0, 0, 0, 50, '  ', 'blank title', 'NOTE-5');
+                    (5, 0, 0, 0, 0, 0, 0, 0, 0, 50, '  ', 'blank title', 'NOTE-5'),
+                    (6, 0, 0, 0, 0, 0, 0, 0, 0, 60, 'Conflict copy', '', 'NOTE-6');
                 insert into ZSFNOTETAG values
                     (10, 0, 'work'),
                     (11, 0, 'misc');
@@ -623,7 +759,7 @@ mod tests {
         assert_eq!(
             summary,
             StatsSummary {
-                total_notes: 4,
+                total_notes: 5,
                 pinned_notes: 1,
                 tagged_notes: 2,
                 archived_notes: 1,
@@ -632,8 +768,37 @@ mod tests {
                 total_words: 11,
                 notes_with_todos: 1,
                 oldest_modified: Some(10),
-                newest_modified: Some(50),
+                newest_modified: Some(60),
                 top_tags: vec![("work".into(), 2)],
+            }
+        );
+    }
+
+    #[test]
+    fn computes_health_summary() {
+        let db = test_db();
+        let summary = db.health_summary().expect("health should compute");
+
+        assert_eq!(
+            summary,
+            HealthSummary {
+                total_notes: 5,
+                duplicate_groups: 1,
+                duplicate_notes: 2,
+                empty_notes: vec![HealthNoteIssue {
+                    identifier: "NOTE-6".into(),
+                    title: "Conflict copy".into(),
+                }],
+                untagged_notes: 3,
+                old_trashed_notes: vec![HealthNoteIssue {
+                    identifier: "NOTE-3".into(),
+                    title: "Trash".into(),
+                }],
+                large_notes: vec![],
+                conflict_notes: vec![HealthNoteIssue {
+                    identifier: "NOTE-6".into(),
+                    title: "Conflict copy".into(),
+                }],
             }
         );
     }

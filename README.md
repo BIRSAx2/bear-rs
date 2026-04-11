@@ -12,6 +12,7 @@ bear open-note --title "My Note"
 bear search crypto
 bear duplicates
 bear stats
+bear health
 bear create "hello" --title "CLI test" --tag rust
 ```
 
@@ -55,6 +56,7 @@ These commands read Bear's local SQLite database directly:
 - `search`
 - `duplicates`
 - `stats`
+- `health`
 - `untagged`
 - `todo`
 - `today`
@@ -68,6 +70,7 @@ bear open-note --title "Systems Security"
 bear search Systems
 bear duplicates --json
 bear stats --json
+bear health --json
 bear open-tag work
 bear tags
 ```
