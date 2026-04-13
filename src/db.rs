@@ -1,7 +1,7 @@
 use std::path::PathBuf;
 
 use anyhow::{Result, anyhow, bail};
-use rusqlite::{Connection, OpenFlags, OptionalExtension, params};
+use rusqlite::{Connection, OpenFlags, OptionalExtension};
 
 #[derive(Debug)]
 pub struct NoteRecord {
@@ -12,6 +12,15 @@ pub struct NoteRecord {
 pub struct NoteListItem {
     pub identifier: String,
     pub title: String,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct SearchResult {
+    pub identifier: String,
+    pub title: String,
+    pub snippet: Option<String>,
+    pub modified_at: Option<i64>,
+    pub rank: u8,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -183,75 +192,104 @@ impl BearDb {
         term: Option<&str>,
         tag: Option<&str>,
         include_trashed: bool,
-    ) -> Result<Vec<NoteListItem>> {
-        let term = term.unwrap_or_default();
-        let like = format!("%{term}%");
-
-        if let Some(tag) = tag {
-            let sql = if include_trashed {
-                "select distinct n.ZUNIQUEIDENTIFIER, coalesce(n.ZTITLE, '')
-                 from ZSFNOTE n
-                 join Z_5TAGS nt on nt.Z_5NOTES = n.Z_PK
-                 join ZSFNOTETAG t on t.Z_PK = nt.Z_13TAGS
-                 where t.ZTITLE = ?1
-                   and n.ZENCRYPTED = 0
-                   and n.ZLOCKED = 0
-                   and n.ZPERMANENTLYDELETED = 0
-                   and (coalesce(n.ZTITLE, '') like ?2 or coalesce(n.ZTEXT, '') like ?2)
-                 order by lower(coalesce(n.ZTITLE, '')) asc"
-            } else {
-                "select distinct n.ZUNIQUEIDENTIFIER, coalesce(n.ZTITLE, '')
-                 from ZSFNOTE n
-                 join Z_5TAGS nt on nt.Z_5NOTES = n.Z_PK
-                 join ZSFNOTETAG t on t.Z_PK = nt.Z_13TAGS
-                 where t.ZTITLE = ?1
-                   and n.ZTRASHED = 0
-                   and n.ZARCHIVED = 0
-                   and n.ZENCRYPTED = 0
-                   and n.ZLOCKED = 0
-                   and n.ZPERMANENTLYDELETED = 0
-                   and (coalesce(n.ZTITLE, '') like ?2 or coalesce(n.ZTEXT, '') like ?2)
-                 order by lower(coalesce(n.ZTITLE, '')) asc"
-            };
-            let mut stmt = self.connection.prepare(sql)?;
-            let rows = stmt.query_map(params![tag, like], |row| {
-                Ok(NoteListItem {
-                    identifier: row.get(0)?,
-                    title: row.get(1)?,
-                })
-            })?;
-            rows.collect::<std::result::Result<Vec<_>, _>>()
-                .map_err(Into::into)
+        since: Option<i64>,
+        before: Option<i64>,
+    ) -> Result<Vec<SearchResult>> {
+        let term = term.unwrap_or_default().trim().to_lowercase();
+        let tag_filter = tag.map(str::trim).filter(|value| !value.is_empty());
+        let sql = if include_trashed {
+            "select ZUNIQUEIDENTIFIER, coalesce(ZTITLE, ''), coalesce(ZTEXT, ''), ZMODIFICATIONDATE
+             from ZSFNOTE
+             where ZENCRYPTED = 0
+               and ZLOCKED = 0
+               and ZPERMANENTLYDELETED = 0"
         } else {
-            let sql = if include_trashed {
-                "select ZUNIQUEIDENTIFIER, coalesce(ZTITLE, '')
-                 from ZSFNOTE
-                 where ZENCRYPTED = 0
-                   and ZLOCKED = 0
-                   and ZPERMANENTLYDELETED = 0
-                   and (coalesce(ZTITLE, '') like ?1 or coalesce(ZTEXT, '') like ?1)
-                 order by lower(coalesce(ZTITLE, '')) asc"
+            "select ZUNIQUEIDENTIFIER, coalesce(ZTITLE, ''), coalesce(ZTEXT, ''), ZMODIFICATIONDATE
+             from ZSFNOTE
+             where ZTRASHED = 0
+               and ZARCHIVED = 0
+               and ZENCRYPTED = 0
+               and ZLOCKED = 0
+               and ZPERMANENTLYDELETED = 0"
+        };
+        let mut stmt = self.connection.prepare(sql)?;
+        let rows = stmt.query_map([], |row| {
+            Ok((
+                row.get::<_, String>(0)?,
+                row.get::<_, String>(1)?,
+                row.get::<_, String>(2)?,
+                row.get::<_, Option<f64>>(3)?,
+            ))
+        })?;
+
+        let note_tags = self.note_tag_map()?;
+        let mut results = Vec::new();
+
+        for row in rows {
+            let (identifier, title, text, modified_at) = row?;
+            let modified_at = modified_at.map(|value| value as i64);
+
+            if let Some(since) = since {
+                if modified_at.is_some_and(|value| value < since) {
+                    continue;
+                }
+            }
+            if let Some(before) = before {
+                if modified_at.is_some_and(|value| value >= before) {
+                    continue;
+                }
+            }
+
+            let tags = note_tags.get(&identifier).cloned().unwrap_or_default();
+            if let Some(tag_filter) = tag_filter {
+                if !tags.iter().any(|candidate| candidate == tag_filter) {
+                    continue;
+                }
+            }
+
+            let title_lower = title.to_lowercase();
+            let text_lower = text.to_lowercase();
+            let tag_match = !term.is_empty()
+                && tags
+                    .iter()
+                    .any(|candidate| candidate.to_lowercase().contains(&term));
+            let title_match = !term.is_empty() && title_lower.contains(&term);
+            let body_match = !term.is_empty() && text_lower.contains(&term);
+
+            if !term.is_empty() && !title_match && !tag_match && !body_match {
+                continue;
+            }
+
+            let rank = if title_match {
+                0
+            } else if tag_match {
+                1
             } else {
-                "select ZUNIQUEIDENTIFIER, coalesce(ZTITLE, '')
-                 from ZSFNOTE
-                 where ZTRASHED = 0
-                   and ZARCHIVED = 0
-                   and ZENCRYPTED = 0
-                   and ZLOCKED = 0
-                   and ZPERMANENTLYDELETED = 0
-                   and (coalesce(ZTITLE, '') like ?1 or coalesce(ZTEXT, '') like ?1)
-                 order by lower(coalesce(ZTITLE, '')) asc"
+                2
             };
-            let mut stmt = self.connection.prepare(sql)?;
-            let rows = stmt.query_map([like], |row| {
-                Ok(NoteListItem {
-                    identifier: row.get(0)?,
-                    title: row.get(1)?,
-                })
-            })?;
-            rows.collect::<std::result::Result<Vec<_>, _>>()
-                .map_err(Into::into)
+
+            results.push(SearchResult {
+                identifier,
+                title,
+                snippet: if body_match {
+                    Some(make_snippet(&text, &text_lower, &term))
+                } else {
+                    None
+                },
+                modified_at,
+                rank,
+            });
         }
+
+        results.sort_by(|left, right| {
+            left.rank
+                .cmp(&right.rank)
+                .then_with(|| right.modified_at.cmp(&left.modified_at))
+                .then_with(|| left.title.to_lowercase().cmp(&right.title.to_lowercase()))
+                .then_with(|| left.identifier.cmp(&right.identifier))
+        });
+
+        Ok(results)
     }
 
     pub fn duplicate_titles(&self) -> Result<Vec<DuplicateGroup>> {
@@ -622,13 +660,22 @@ impl BearDb {
     }
 }
 
+fn make_snippet(text: &str, text_lower: &str, term: &str) -> String {
+    let normalized = text.split_whitespace().collect::<Vec<_>>().join(" ");
+    let normalized_lower = text_lower.split_whitespace().collect::<Vec<_>>().join(" ");
+    let index = normalized_lower.find(term).unwrap_or(0);
+    let start = index.saturating_sub(30);
+    let end = (index + term.len() + 50).min(normalized.len());
+    normalized[start..end].trim().to_string()
+}
+
 #[cfg(test)]
 mod tests {
     use rusqlite::Connection;
 
     use super::{
         BearDb, DuplicateGroup, DuplicateNote, HealthNoteIssue, HealthSummary, NoteListItem,
-        StatsSummary,
+        SearchResult, StatsSummary,
     };
 
     fn test_db() -> BearDb {
@@ -664,16 +711,21 @@ mod tests {
                     (1, 0, 0, 1, 0, 0, 0, 1, 1, 10, 'Alpha', 'alpha body - [ ]', 'NOTE-1'),
                     (2, 0, 1, 0, 0, 0, 0, 0, 0, 20, 'Beta', 'beta body', 'NOTE-2'),
                     (3, 1, 0, 0, 0, 0, 0, 0, 0, 1, 'Trash', 'trashed', 'NOTE-3'),
-                    (4, 0, 0, 0, 0, 0, 0, 0, 0, 40, 'Alpha', 'another alpha', 'NOTE-4'),
+                    (4, 0, 0, 0, 0, 0, 0, 0, 0, 40, 'Alpha', 'another alpha with rust body', 'NOTE-4'),
                     (5, 0, 0, 0, 0, 0, 0, 0, 0, 50, '  ', 'blank title', 'NOTE-5'),
-                    (6, 0, 0, 0, 0, 0, 0, 0, 0, 60, 'Conflict copy', '', 'NOTE-6');
+                    (6, 0, 0, 0, 0, 0, 0, 0, 0, 60, 'Conflict copy', '', 'NOTE-6'),
+                    (7, 0, 0, 0, 0, 0, 0, 0, 0, 70, 'Gamma', 'body mention with   rust across
+lines', 'NOTE-7'),
+                    (8, 0, 0, 0, 0, 0, 0, 0, 0, 80, 'Rust title', 'no body hit here', 'NOTE-8');
                 insert into ZSFNOTETAG values
                     (10, 0, 'work'),
-                    (11, 0, 'misc');
+                    (11, 0, 'misc'),
+                    (12, 0, 'rust');
                 insert into Z_5TAGS values
                     (1, 10),
                     (2, 10),
-                    (3, 11);
+                    (3, 11),
+                    (7, 12);
                 ",
             )
             .expect("schema should be created");
@@ -687,20 +739,23 @@ mod tests {
         let note = db
             .find_note(None, Some("Alpha"), false)
             .expect("note should exist");
-        assert_eq!(note.text, "another alpha");
+        assert_eq!(note.text, "another alpha with rust body");
     }
 
     #[test]
     fn searches_non_trashed_notes() {
         let db = test_db();
         let notes = db
-            .search(Some("body"), None, false)
+            .search(Some("alpha body"), None, false, None, None)
             .expect("search should work");
         assert_eq!(
             notes,
-            vec![NoteListItem {
+            vec![SearchResult {
                 identifier: "NOTE-1".into(),
-                title: "Alpha".into()
+                title: "Alpha".into(),
+                snippet: Some("alpha body - [ ]".into()),
+                modified_at: Some(10),
+                rank: 2,
             }]
         );
     }
@@ -759,17 +814,17 @@ mod tests {
         assert_eq!(
             summary,
             StatsSummary {
-                total_notes: 5,
+                total_notes: 7,
                 pinned_notes: 1,
-                tagged_notes: 2,
+                tagged_notes: 3,
                 archived_notes: 1,
                 trashed_notes: 1,
-                unique_tags: 2,
-                total_words: 11,
+                unique_tags: 3,
+                total_words: 24,
                 notes_with_todos: 1,
                 oldest_modified: Some(10),
-                newest_modified: Some(60),
-                top_tags: vec![("work".into(), 2)],
+                newest_modified: Some(80),
+                top_tags: vec![("work".into(), 2), ("rust".into(), 1)],
             }
         );
     }
@@ -782,14 +837,14 @@ mod tests {
         assert_eq!(
             summary,
             HealthSummary {
-                total_notes: 5,
+                total_notes: 7,
                 duplicate_groups: 1,
                 duplicate_notes: 2,
                 empty_notes: vec![HealthNoteIssue {
                     identifier: "NOTE-6".into(),
                     title: "Conflict copy".into(),
                 }],
-                untagged_notes: 3,
+                untagged_notes: 4,
                 old_trashed_notes: vec![HealthNoteIssue {
                     identifier: "NOTE-3".into(),
                     title: "Trash".into(),
@@ -800,6 +855,54 @@ mod tests {
                     title: "Conflict copy".into(),
                 }],
             }
+        );
+    }
+
+    #[test]
+    fn search_ranks_title_match_over_tag_and_body() {
+        let db = test_db();
+        let results = db
+            .search(Some("rust"), None, false, None, None)
+            .expect("search should work");
+
+        assert_eq!(
+            results
+                .iter()
+                .map(|result| result.identifier.as_str())
+                .collect::<Vec<_>>(),
+            vec!["NOTE-8", "NOTE-7", "NOTE-4"]
+        );
+    }
+
+    #[test]
+    fn search_applies_since_and_before_filters() {
+        let db = test_db();
+        let results = db
+            .search(Some("rust"), None, false, Some(50), Some(80))
+            .expect("search should work");
+
+        assert_eq!(
+            results
+                .iter()
+                .map(|result| result.identifier.as_str())
+                .collect::<Vec<_>>(),
+            vec!["NOTE-7"]
+        );
+    }
+
+    #[test]
+    fn search_normalizes_snippets() {
+        let db = test_db();
+        let result = db
+            .search(Some("rust"), None, false, None, None)
+            .expect("search should work")
+            .into_iter()
+            .find(|result| result.identifier == "NOTE-7")
+            .expect("body match should exist");
+
+        assert_eq!(
+            result.snippet,
+            Some("body mention with rust across lines".into())
         );
     }
 }

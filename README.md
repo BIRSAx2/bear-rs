@@ -10,6 +10,7 @@ It reads Bear's local SQLite database in read-only mode. It sends write and UI a
 bear --help
 bear open-note --title "My Note"
 bear search crypto
+bear search crypto --since last-week --json
 bear duplicates
 bear stats
 bear health
@@ -68,6 +69,7 @@ Examples:
 bear open-note --id 721FF116-185F-4474-8730-60D29995A4A4
 bear open-note --title "Systems Security"
 bear search Systems
+bear search Systems --since 2026-04-01 --before 2026-04-17
 bear duplicates --json
 bear stats --json
 bear health --json

@@ -5,6 +5,7 @@ use crate::bear::{join_tags, maybe_push, maybe_push_bool, open_bear_action};
 use crate::cli::Cli;
 use crate::cli::Commands;
 use crate::config::{encode_file, load_token, resolve_database_path, save_token};
+use crate::dates::parse_bear_date_filter;
 use crate::db::BearDb;
 
 pub fn run() -> Result<()> {
@@ -53,12 +54,42 @@ pub fn run() -> Result<()> {
             }
         }
         Commands::Search(cmd) => {
-            for note in db.as_ref().expect("db available for read command").search(
+            let since = cmd
+                .since
+                .as_deref()
+                .map(parse_bear_date_filter)
+                .transpose()?;
+            let before = cmd
+                .before
+                .as_deref()
+                .map(parse_bear_date_filter)
+                .transpose()?;
+            let results = db.as_ref().expect("db available for read command").search(
                 cmd.term.as_deref(),
                 cmd.tag.as_deref(),
                 false,
-            )? {
-                println!("{}\t{}", note.identifier, note.title);
+                since,
+                before,
+            )?;
+
+            if cmd.json {
+                let output = serde_json::json!({
+                    "results": results.iter().map(|note| serde_json::json!({
+                        "id": note.identifier,
+                        "title": note.title,
+                        "snippet": note.snippet,
+                        "modified": note.modified_at,
+                        "rank": note.rank,
+                    })).collect::<Vec<_>>()
+                });
+                println!("{}", serde_json::to_string_pretty(&output)?);
+            } else {
+                for note in results {
+                    println!("{}\t{}", note.identifier, note.title);
+                    if let Some(snippet) = note.snippet {
+                        println!("  {}", snippet);
+                    }
+                }
             }
         }
         Commands::Duplicates(cmd) => {

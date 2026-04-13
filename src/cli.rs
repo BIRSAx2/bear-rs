@@ -68,6 +68,12 @@ pub struct SearchCommand {
     pub term: Option<String>,
     #[arg(long)]
     pub tag: Option<String>,
+    #[arg(long)]
+    pub since: Option<String>,
+    #[arg(long)]
+    pub before: Option<String>,
+    #[arg(long, default_value_t = false)]
+    pub json: bool,
 }
 
 #[derive(Args, Debug)]
