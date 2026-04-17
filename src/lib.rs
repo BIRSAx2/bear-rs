@@ -1,8 +1,8 @@
 mod bear;
 mod cli;
 pub mod config;
-pub mod db;
 mod dates;
+pub mod db;
 mod export;
 pub mod frontmatter;
 mod runner;

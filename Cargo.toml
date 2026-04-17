@@ -1,6 +1,6 @@
 [package]
 name = "bear-cli"
-version = "0.2.0"
+version = "0.2.1"
 description = "A native Rust CLI for Bear.app on macOS using Bear's SQLite database for reads and x-callback-url actions for writes"
 edition = "2024"
 rust-version = "1.85"
