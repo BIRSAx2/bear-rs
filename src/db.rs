@@ -86,6 +86,16 @@ pub struct HealthSummary {
     pub conflict_notes: Vec<HealthNoteIssue>,
 }
 
+/// A file attachment belonging to a Bear note.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct NoteFile {
+    /// Original filename as stored in Bear (e.g. `image.png`)
+    pub filename: String,
+    /// Bear's internal UUID for the file — used as the subdirectory name under
+    /// `Application Data/Local Files/Note Images/`
+    pub file_uuid: String,
+}
+
 pub struct BearDb {
     connection: Connection,
 }
@@ -683,6 +693,27 @@ impl BearDb {
             Ok(NoteListItem {
                 identifier: row.get(0)?,
                 title: row.get(1)?,
+            })
+        })?;
+        rows.collect::<std::result::Result<Vec<_>, _>>()
+            .map_err(Into::into)
+    }
+
+    /// Returns all file attachments for the note with the given identifier.
+    /// The `file_uuid` field can be used to locate the file on disk:
+    /// `Application Data/Local Files/Note Images/{file_uuid}/{filename}`
+    pub fn note_files(&self, note_id: &str) -> Result<Vec<NoteFile>> {
+        let mut stmt = self.connection.prepare(
+            "SELECT f.ZFILENAME, f.ZUNIQUEIDENTIFIER
+             FROM ZSFNOTEFILE f
+             JOIN ZSFNOTE n ON f.ZNOTE = n.Z_PK
+             WHERE n.ZUNIQUEIDENTIFIER = ?1
+               AND f.ZPERMANENTLYDELETED = 0",
+        )?;
+        let rows = stmt.query_map([note_id], |row| {
+            Ok(NoteFile {
+                filename: row.get(0)?,
+                file_uuid: row.get(1)?,
             })
         })?;
         rows.collect::<std::result::Result<Vec<_>, _>>()
