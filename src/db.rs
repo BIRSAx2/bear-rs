@@ -314,83 +314,63 @@ impl BearDb {
     }
 
     pub fn export_notes(&self, tag: Option<&str>) -> Result<Vec<ExportNote>> {
-        let sql = if tag.is_some() {
-            "select distinct n.ZUNIQUEIDENTIFIER, coalesce(n.ZTITLE, ''), coalesce(n.ZTEXT, ''), n.ZPINNED, n.ZCREATIONDATE, n.ZMODIFICATIONDATE
+        // LEFT JOIN + NULL guard lets a single query handle both the filtered and
+        // unfiltered cases without duplicating the row-mapping logic.
+        let mut stmt = self.connection.prepare(
+            "select distinct n.ZUNIQUEIDENTIFIER, coalesce(n.ZTITLE, ''), coalesce(n.ZTEXT, ''),
+                    n.ZPINNED, n.ZCREATIONDATE, n.ZMODIFICATIONDATE
              from ZSFNOTE n
-             join Z_5TAGS nt on nt.Z_5NOTES = n.Z_PK
-             join ZSFNOTETAG t on t.Z_PK = nt.Z_13TAGS
-             where t.ZTITLE = ?1
-               and n.ZTRASHED = 0
+             left join Z_5TAGS nt on nt.Z_5NOTES = n.Z_PK
+             left join ZSFNOTETAG t on t.Z_PK = nt.Z_13TAGS
+             where n.ZTRASHED = 0
                and n.ZENCRYPTED = 0
                and n.ZLOCKED = 0
                and n.ZPERMANENTLYDELETED = 0
-             order by lower(coalesce(n.ZTITLE, '')) asc"
-        } else {
-            "select ZUNIQUEIDENTIFIER, coalesce(ZTITLE, ''), coalesce(ZTEXT, ''), ZPINNED, ZCREATIONDATE, ZMODIFICATIONDATE
-             from ZSFNOTE
-             where ZTRASHED = 0
-               and ZENCRYPTED = 0
-               and ZLOCKED = 0
-               and ZPERMANENTLYDELETED = 0
-             order by lower(coalesce(ZTITLE, '')) asc"
-        };
+               and (?1 is null or t.ZTITLE = ?1)
+             order by lower(coalesce(n.ZTITLE, '')) asc",
+        )?;
 
         let note_tags = self.note_tag_map()?;
+
+        let rows = stmt.query_map([tag], |row| {
+            Ok((
+                row.get::<_, String>(0)?,
+                row.get::<_, String>(1)?,
+                row.get::<_, String>(2)?,
+                row.get::<_, i64>(3)?,
+                row.get::<_, Option<f64>>(4)?,
+                row.get::<_, Option<f64>>(5)?,
+            ))
+        })?;
+
         let mut notes = Vec::new();
-
-        if let Some(tag) = tag {
-            let mut stmt = self.connection.prepare(sql)?;
-            let rows = stmt.query_map([tag], |row| {
-                Ok((
-                    row.get::<_, String>(0)?,
-                    row.get::<_, String>(1)?,
-                    row.get::<_, String>(2)?,
-                    row.get::<_, i64>(3)?,
-                    row.get::<_, Option<f64>>(4)?,
-                    row.get::<_, Option<f64>>(5)?,
-                ))
-            })?;
-
-            for row in rows {
-                let (identifier, title, text, pinned, created_at, modified_at) = row?;
-                notes.push(ExportNote {
-                    tags: note_tags.get(&identifier).cloned().unwrap_or_default(),
-                    identifier,
-                    title,
-                    text,
-                    pinned: pinned == 1,
-                    created_at: created_at.map(|value| value as i64),
-                    modified_at: modified_at.map(|value| value as i64),
-                });
-            }
-        } else {
-            let mut stmt = self.connection.prepare(sql)?;
-            let rows = stmt.query_map([], |row| {
-                Ok((
-                    row.get::<_, String>(0)?,
-                    row.get::<_, String>(1)?,
-                    row.get::<_, String>(2)?,
-                    row.get::<_, i64>(3)?,
-                    row.get::<_, Option<f64>>(4)?,
-                    row.get::<_, Option<f64>>(5)?,
-                ))
-            })?;
-
-            for row in rows {
-                let (identifier, title, text, pinned, created_at, modified_at) = row?;
-                notes.push(ExportNote {
-                    tags: note_tags.get(&identifier).cloned().unwrap_or_default(),
-                    identifier,
-                    title,
-                    text,
-                    pinned: pinned == 1,
-                    created_at: created_at.map(|value| value as i64),
-                    modified_at: modified_at.map(|value| value as i64),
-                });
-            }
+        for row in rows {
+            let (identifier, title, text, pinned, created_at, modified_at) = row?;
+            notes.push(ExportNote {
+                tags: note_tags.get(&identifier).cloned().unwrap_or_default(),
+                identifier,
+                title,
+                text,
+                pinned: pinned == 1,
+                created_at: created_at.map(|v| v as i64),
+                modified_at: modified_at.map(|v| v as i64),
+            });
         }
 
         Ok(notes)
+    }
+
+    /// Returns the title of the note with the given identifier, or `None` if
+    /// the note does not exist.
+    pub fn note_title(&self, note_id: &str) -> Result<Option<String>> {
+        self.connection
+            .query_row(
+                "select coalesce(ZTITLE, '') from ZSFNOTE where ZUNIQUEIDENTIFIER = ?1 limit 1",
+                [note_id],
+                |row| row.get(0),
+            )
+            .optional()
+            .map_err(Into::into)
     }
 
     pub fn duplicate_titles(&self) -> Result<Vec<DuplicateGroup>> {
