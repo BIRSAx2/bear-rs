@@ -146,6 +146,8 @@ pub struct CreateCommand {
 pub struct AddTextCommand {
     pub text: Option<String>,
     #[arg(long)]
+    pub file: Option<PathBuf>,
+    #[arg(long)]
     pub id: Option<String>,
     #[arg(long)]
     pub title: Option<String>,

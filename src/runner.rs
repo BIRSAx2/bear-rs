@@ -309,10 +309,17 @@ pub fn run() -> Result<()> {
             open_bear_action("create", &query)?;
         }
         Commands::AddText(cmd) => {
+            let text = match (cmd.text, cmd.file) {
+                (Some(_), Some(_)) => {
+                    anyhow::bail!("--file and positional TEXT are mutually exclusive")
+                }
+                (_, Some(path)) => Some(std::fs::read_to_string(&path)?),
+                (text, None) => text,
+            };
             let mut query = Vec::new();
             maybe_push(&mut query, "id", cmd.id);
             maybe_push(&mut query, "title", cmd.title);
-            maybe_push(&mut query, "text", cmd.text);
+            maybe_push(&mut query, "text", text);
             maybe_push(&mut query, "header", cmd.header);
             maybe_push(&mut query, "mode", Some(cmd.mode));
             maybe_push(&mut query, "tags", join_tags(&cmd.tag));
