@@ -3,8 +3,18 @@ use std::path::{Path, PathBuf};
 
 use anyhow::{Context, Result};
 
-use crate::db::ExportNote;
 use crate::frontmatter::{FrontMatter, parse_front_matter};
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct ExportNote {
+    pub identifier: String,
+    pub title: String,
+    pub text: String,
+    pub pinned: bool,
+    pub created_at: Option<i64>,
+    pub modified_at: Option<i64>,
+    pub tags: Vec<String>,
+}
 
 pub fn export_notes(
     output_dir: &Path,
@@ -116,9 +126,7 @@ fn sanitize_path_segment(value: &str) -> String {
 mod tests {
     use std::path::PathBuf;
 
-    use crate::db::ExportNote;
-
-    use super::{export_path_for, render_exported_note, sanitize_filename};
+    use super::{ExportNote, export_path_for, render_exported_note, sanitize_filename};
 
     fn sample_note() -> ExportNote {
         ExportNote {

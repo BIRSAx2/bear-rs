@@ -1,34 +1,21 @@
 # bear-cli
 
-`bear-cli` is a native Rust CLI for [Bear.app](https://bear.app/) on macOS.
+`bear-cli` is a native Rust CLI for [Bear](https://bear.app) that talks directly to Bear's CloudKit container.
 
-It reads Bear's local SQLite database in read-only mode. It sends write and UI actions through Bear's `bear://x-callback-url/...` scheme.
+## Features
 
-## Usage
-
-```sh
-bear --help
-bear open-note --title "My Note"
-bear search crypto
-bear search crypto --since last-week --json
-bear export ./notes --frontmatter --by-tag
-bear duplicates
-bear stats
-bear health
-bear create "hello" --title "CLI test" --tag rust
-```
+- authenticate with Bear's CloudKit web flow
+- list, open, search, and export notes
+- inspect tags and tag membership
+- create notes, edit note text, attach files, trash, and archive
+- rename and delete tags
+- compute duplicates, stats, health checks, and other library summaries from CloudKit data
 
 ## Requirements
 
 - macOS
-- Bear.app installed
-- local access to Bear's database under a Bear group container such as:
-
-```text
-~/Library/Group Containers/<TEAM_ID>.net.shinyfrog.bear/Application Data/database.sqlite
-```
-
-By default `bear-cli` discovers this dynamically. You only need `--database` or `BEAR_DATABASE` if you want to override it.
+- a Bear account with iCloud sync enabled
+- network access to Apple's CloudKit endpoints
 
 ## Installation
 
@@ -48,10 +35,40 @@ cargo install --path .
 
 The installed binary name is `bear`.
 
-### Read commands
+## Authentication
 
-These commands read Bear's local SQLite database directly:
+Authenticate once before using CloudKit-backed commands:
 
+```sh
+bear auth
+```
+
+The auth flow opens a localhost page and prefers Safari for CloudKit sign-in on macOS.
+
+If you already have a valid `ckWebAuthToken`, you can save it directly:
+
+```sh
+bear auth --token '<CK_WEB_AUTH_TOKEN>'
+```
+
+On success the token is saved locally and reused by subsequent commands.
+
+## Usage
+
+```sh
+bear --help
+bear notes
+bear open-note --title "My Note"
+bear search crypto --json
+bear create "# Scratch"
+bear add-text --title "Scratch" "more text"
+```
+
+## Commands
+
+### Reading notes and tags
+
+- `notes`
 - `open-note`
 - `tags`
 - `open-tag`
@@ -68,80 +85,60 @@ These commands read Bear's local SQLite database directly:
 Examples:
 
 ```sh
+bear notes
+bear notes --limit 50
+bear notes --json
 bear open-note --id 721FF116-185F-4474-8730-60D29995A4A4
 bear open-note --title "Systems Security"
 bear search Systems
-bear search Systems --since 2026-04-01 --before 2026-04-17
-bear export ./notes --tag work --frontmatter
+bear search Systems --since 2026-04-01 --before 2026-04-17 --json
+bear open-tag work
+bear tags
+bear export ./notes --frontmatter --by-tag
 bear duplicates --json
 bear stats --json
 bear health --json
-bear open-tag work
-bear tags
+bear todo
+bear today
 ```
 
-### Write and action commands
-
-These commands ask Bear.app itself to perform the action through its URL scheme:
+### Writing notes and tags
 
 - `create`
 - `add-text`
 - `add-file`
-- `grab-url`
 - `trash`
 - `archive`
 - `rename-tag`
 - `delete-tag`
-- `raw`
 
 Examples:
 
 ```sh
-bear create "hello world" --title "Scratch"
-bear add-text "append me" --title "Scratch"
+bear create "# Scratch"
+bear create "# Project note" -t work -t rust
+bear add-text --title "Scratch" "append me"
+bear add-text --title "Scratch" --mode prepend "top section"
+bear add-text --title "Scratch" --mode replace-all "# Rewritten"
 bear add-file ./note.txt --title "Scratch"
-bear grab-url https://example.com --tag inbox --wait
-bear archive --id ABCD-1234
-bear trash --search old
+bear archive --search "old note"
+bear trash --search "temporary"
 bear rename-tag inbox archive/inbox
 bear delete-tag old-tag
 ```
 
-## Authentication
-
-Some Bear x-callback actions support an API token. Save it once with:
-
-```sh
-bear auth YOUR_BEAR_API_TOKEN
-```
-
-The saved token currently matters most for `raw`:
-
-```sh
-bear raw open-tag name=work --use-saved-token
-bear raw tags --use-saved-token
-bear raw open-note selected=yes --use-saved-token
-```
-
-You can also pass a token explicitly:
-
-```sh
-bear raw tags --token YOUR_BEAR_API_TOKEN
-```
-
 ## Notes
 
-- macOS only
-- Bear must be installed for write/action commands
-- write commands currently launch Bear successfully but do not capture x-callback return payloads back into the terminal
-- read commands reflect Bear's local database state, not remote sync state
-- encrypted and locked notes are intentionally filtered from several list/search commands
+- All operational commands are CloudKit-based.
+- Authentication is required for both reads and writes.
+- The CloudKit API token used by this project was reverse-engineered from Bear Web's public frontend bundle.
+- The auth flow is browser-sensitive. Safari is the preferred path on macOS.
+- Some large-note edge cases may still require additional CloudKit asset-handling work if Bear stores note bodies outside `textADP`.
 
 ## Development
 
 ```sh
-cargo fmt --all
+cargo build
 cargo test
 cargo clippy --all-targets --all-features -- -D warnings
-cargo package --allow-dirty
 ```
