@@ -5,6 +5,7 @@ use anyhow::{Result, anyhow};
 use tiny_http::{Header, Method, Response, Server};
 
 use super::client::API_TOKEN;
+use crate::verbose;
 
 const PREFERRED_PORT: u16 = 19222;
 const TIMEOUT_SECS: u64 = 120;
@@ -23,6 +24,7 @@ pub fn acquire_token() -> Result<String> {
         .unwrap_or(PREFERRED_PORT);
     eprintln!("Opening http://localhost:{port}/ in Safari...");
     eprintln!("Sign in with your Apple ID. The window will close automatically.");
+    verbose::eprintln(1, format!("[auth] listening on 127.0.0.1:{port}"));
     open_browser(port);
 
     let token: Arc<Mutex<Option<String>>> = Arc::new(Mutex::new(None));
@@ -56,10 +58,21 @@ fn handle_request(
 ) -> Result<bool> {
     let raw_url = request.url().to_string();
     let path = raw_url.split('?').next().unwrap_or("/").to_string();
+    if verbose::enabled(3) {
+        verbose::eprintln(
+            3,
+            format!(
+                "[auth] {} {}",
+                request.method().as_str(),
+                redact_auth_url(&raw_url)
+            ),
+        );
+    }
 
     match (request.method(), path.as_str()) {
         (Method::Get, "/") | (Method::Get, "/index.html") => {
             if let Some(t) = extract_token_from_url(&raw_url) {
+                verbose::eprintln(2, "[auth] captured ckWebAuthToken from request URL");
                 *token.lock().unwrap() = Some(t);
                 let response = Response::from_data(success_html().as_bytes().to_vec())
                     .with_header(content_type("text/html; charset=utf-8"));
@@ -75,6 +88,7 @@ fn handle_request(
 
         (Method::Get, "/callback") => {
             if let Some(t) = extract_token_from_url(&raw_url) {
+                verbose::eprintln(2, "[auth] captured ckWebAuthToken from callback URL");
                 *token.lock().unwrap() = Some(t);
                 let response = Response::from_data(success_html().as_bytes().to_vec())
                     .with_header(content_type("text/html; charset=utf-8"));
@@ -90,9 +104,16 @@ fn handle_request(
         (Method::Post, "/callback") => {
             let mut body = String::new();
             request.as_reader().read_to_string(&mut body).unwrap_or(0);
+            if verbose::enabled(3) {
+                verbose::eprintln(
+                    3,
+                    format!("[auth] callback body: {}", redact_auth_body(&body)),
+                );
+            }
 
             let cors = Header::from_bytes("Access-Control-Allow-Origin", "*").unwrap();
             if let Some(t) = extract_token_from_json(&body) {
+                verbose::eprintln(2, "[auth] captured ckWebAuthToken from callback JSON");
                 *token.lock().unwrap() = Some(t);
                 let response = Response::from_data(b"{\"status\":\"ok\"}".to_vec())
                     .with_header(content_type("application/json"))
@@ -210,6 +231,45 @@ fn percent_decode(input: &str) -> String {
     }
 
     out
+}
+
+fn redact_auth_url(url: &str) -> String {
+    redact_query_value(url, "ckWebAuthToken=")
+}
+
+fn redact_auth_body(body: &str) -> String {
+    if let Some(token) = extract_token_from_json(body) {
+        body.replace(&token, &redact_secret(&token))
+    } else {
+        body.to_string()
+    }
+}
+
+fn redact_query_value(url: &str, key: &str) -> String {
+    let Some(start) = url.find(key) else {
+        return url.to_string();
+    };
+    let value_start = start + key.len();
+    let value_end = url[value_start..]
+        .find('&')
+        .map(|offset| value_start + offset)
+        .unwrap_or(url.len());
+    let value = &url[value_start..value_end];
+    let replacement = redact_secret(value);
+
+    let mut out = String::with_capacity(url.len());
+    out.push_str(&url[..value_start]);
+    out.push_str(&replacement);
+    out.push_str(&url[value_end..]);
+    out
+}
+
+fn redact_secret(value: &str) -> String {
+    if value.len() <= 8 {
+        "***".to_string()
+    } else {
+        format!("{}...{}", &value[..4], &value[value.len() - 4..])
+    }
 }
 
 fn hex_val(b: u8) -> Option<u8> {

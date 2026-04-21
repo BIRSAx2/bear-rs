@@ -1,6 +1,6 @@
 use std::path::PathBuf;
 
-use clap::{Args, Parser, Subcommand};
+use clap::{ArgAction, Args, Parser, Subcommand};
 
 const ROOT_AFTER_HELP: &str = "\
 Selection rules:
@@ -12,6 +12,9 @@ Output conventions:
   Commands with --json emit structured JSON for agent consumption.
 
 Examples:
+  bear -v notes --limit 20
+  bear -vv inspect-note --title \"Scratch\"
+  bear -vvv auth
   bear notes --limit 20 --json
   bear open-note --title \"Scratch\"
   bear add-text --title \"Scratch\" \"more text\"
@@ -21,6 +24,9 @@ Examples:
 #[command(name = "bear")]
 #[command(about = "CloudKit CLI for Bear notes on macOS", version, after_help = ROOT_AFTER_HELP)]
 pub struct Cli {
+    /// Increase diagnostic output. Use `-v` for request flow, `-vv` for request/response payloads, `-vvv` for auth callback details.
+    #[arg(short = 'v', long = "verbose", global = true, action = ArgAction::Count)]
+    pub verbose: u8,
     #[command(subcommand)]
     pub command: Commands,
 }

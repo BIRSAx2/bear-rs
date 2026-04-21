@@ -8,6 +8,7 @@ use crate::cloudkit::client::{AttachPosition, CloudKitClient, extract_title, now
 use crate::cloudkit::models::CkRecord;
 use crate::dates::parse_bear_date_filter;
 use crate::export::{ExportNote, export_notes};
+use crate::verbose;
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 struct SearchResult {
@@ -72,9 +73,11 @@ struct HealthSummary {
 
 pub fn run() -> Result<()> {
     let cli = Cli::parse();
+    crate::verbose::set(cli.verbose);
 
     match cli.command {
         Commands::Auth(cmd) => {
+            command_log(1, "auth");
             let token = match cmd.token {
                 Some(t) => t,
                 None => crate::cloudkit::auth_server::acquire_token()?,
@@ -87,6 +90,7 @@ pub fn run() -> Result<()> {
         }
 
         Commands::OpenNote(cmd) => {
+            command_log(1, "open-note");
             let ck = load_ck()?;
             let note = resolve_note(
                 cmd.id.as_deref(),
@@ -98,6 +102,7 @@ pub fn run() -> Result<()> {
             println!("{}", note.str_field("textADP").unwrap_or(""));
         }
         Commands::InspectNote(cmd) => {
+            command_log(1, "inspect-note");
             let ck = load_ck()?;
             let note = if let Some(id) = cmd.id.as_deref() {
                 ck.fetch_note(id)?
@@ -109,6 +114,7 @@ pub fn run() -> Result<()> {
             println!("{}", serde_json::to_string_pretty(&note)?);
         }
         Commands::Tags => {
+            command_log(1, "tags");
             for tag in load_ck()?.list_tags()? {
                 if let Some(name) = tag.str_field("title") {
                     println!("{name}");
@@ -116,7 +122,9 @@ pub fn run() -> Result<()> {
             }
         }
         Commands::OpenTag(cmd) => {
+            command_log(1, format!("open-tag name={}", cmd.name));
             let names = split_csv(&cmd.name);
+            verbose::eprintln(2, format!("[runner] open-tag parsed names={names:?}"));
             for note in load_ck()?.list_notes(false, false, None)? {
                 let note_tags = note.string_list_field("tagsStrings");
                 if names
@@ -132,6 +140,13 @@ pub fn run() -> Result<()> {
             }
         }
         Commands::Search(cmd) => {
+            command_log(
+                1,
+                format!(
+                    "search term={:?} tag={:?} since={:?} before={:?}",
+                    cmd.term, cmd.tag, cmd.since, cmd.before
+                ),
+            );
             let since = cmd
                 .since
                 .as_deref()
@@ -148,6 +163,10 @@ pub fn run() -> Result<()> {
                 cmd.tag.as_deref(),
                 since,
                 before,
+            );
+            verbose::eprintln(
+                1,
+                format!("[runner] search matched {} note(s)", results.len()),
             );
 
             if cmd.json {
@@ -171,7 +190,18 @@ pub fn run() -> Result<()> {
             }
         }
         Commands::Notes(cmd) => {
+            command_log(
+                1,
+                format!(
+                    "notes include_trashed={} include_archived={} limit={:?}",
+                    cmd.trashed, cmd.archived, cmd.limit
+                ),
+            );
             let notes = load_ck()?.list_notes(cmd.trashed, cmd.archived, cmd.limit)?;
+            verbose::eprintln(
+                1,
+                format!("[runner] notes returned {} note(s)", notes.len()),
+            );
 
             if cmd.json {
                 println!(
@@ -201,8 +231,16 @@ pub fn run() -> Result<()> {
             }
         }
         Commands::PhantomNotes(cmd) => {
+            command_log(
+                1,
+                format!("phantom-notes delete={} limit={:?}", cmd.delete, cmd.limit),
+            );
             let ck = load_ck()?;
             let notes = ck.list_phantom_notes(cmd.limit)?;
+            verbose::eprintln(
+                1,
+                format!("[runner] phantom-notes found {} record(s)", notes.len()),
+            );
 
             if cmd.delete {
                 let deleted = ck.delete_phantom_notes(&notes)?;
@@ -229,9 +267,23 @@ pub fn run() -> Result<()> {
             }
         }
         Commands::Export(cmd) => {
+            command_log(
+                1,
+                format!(
+                    "export output={} tag={:?} frontmatter={} by_tag={}",
+                    cmd.output.display(),
+                    cmd.tag,
+                    cmd.frontmatter,
+                    cmd.by_tag
+                ),
+            );
             let notes = exportable_notes(
                 &load_ck()?.list_notes(false, false, None)?,
                 cmd.tag.as_deref(),
+            );
+            verbose::eprintln(
+                1,
+                format!("[runner] export selected {} note(s)", notes.len()),
             );
             let written = export_notes(&cmd.output, &notes, cmd.frontmatter, cmd.by_tag)?;
             println!(
@@ -241,7 +293,12 @@ pub fn run() -> Result<()> {
             );
         }
         Commands::Duplicates(cmd) => {
+            command_log(1, format!("duplicates json={}", cmd.json));
             let groups = duplicate_groups(&load_ck()?.list_notes(false, true, None)?);
+            verbose::eprintln(
+                1,
+                format!("[runner] duplicates found {} group(s)", groups.len()),
+            );
             if cmd.json {
                 let total = groups.iter().map(|g| g.notes.len()).sum::<usize>();
                 println!(
@@ -274,6 +331,7 @@ pub fn run() -> Result<()> {
             }
         }
         Commands::Stats(cmd) => {
+            command_log(1, format!("stats json={}", cmd.json));
             let s = stats_summary(
                 &load_ck()?.list_notes(true, true, None)?,
                 &load_ck()?.list_tags()?,
@@ -322,6 +380,7 @@ pub fn run() -> Result<()> {
             }
         }
         Commands::Health(cmd) => {
+            command_log(1, format!("health json={}", cmd.json));
             let s = health_summary(&load_ck()?.list_notes(true, true, None)?);
             if cmd.json {
                 println!(
@@ -352,6 +411,7 @@ pub fn run() -> Result<()> {
             }
         }
         Commands::Untagged(cmd) => {
+            command_log(1, format!("untagged search={:?}", cmd.search));
             for note in load_ck()?.list_notes(false, false, None)? {
                 if note.string_list_field("tagsStrings").is_empty()
                     && note_matches_optional_search(&note, cmd.search.as_deref())
@@ -365,6 +425,7 @@ pub fn run() -> Result<()> {
             }
         }
         Commands::Todo(cmd) => {
+            command_log(1, format!("todo search={:?}", cmd.search));
             for note in load_ck()?.list_notes(false, false, None)? {
                 if note.str_field("textADP").unwrap_or("").contains("- [ ]")
                     && note_matches_optional_search(&note, cmd.search.as_deref())
@@ -378,7 +439,9 @@ pub fn run() -> Result<()> {
             }
         }
         Commands::Today(cmd) => {
+            command_log(1, format!("today search={:?}", cmd.search));
             let start = parse_cloudkit_date_filter("today")?;
+            verbose::eprintln(2, format!("[runner] today threshold={start}"));
             for note in load_ck()?.list_notes(false, false, None)? {
                 if note
                     .i64_field("sf_modificationDate")
@@ -394,6 +457,7 @@ pub fn run() -> Result<()> {
             }
         }
         Commands::Locked(cmd) => {
+            command_log(1, format!("locked search={:?}", cmd.search));
             for note in load_ck()?.list_notes(false, true, None)? {
                 if note.bool_field("locked").unwrap_or(false)
                     && note_matches_optional_search(&note, cmd.search.as_deref())
@@ -408,14 +472,30 @@ pub fn run() -> Result<()> {
         }
 
         Commands::Create(cmd) => {
+            command_log(1, format!("create tags={:?}", cmd.tag));
             let text = read_text(cmd.text)?;
             let ck = load_ck()?;
+            verbose::eprintln(
+                2,
+                format!(
+                    "[runner] create title={:?} body_len={}",
+                    extract_title(&text),
+                    text.len()
+                ),
+            );
             let record = ck.create_note(&text, vec![], cmd.tag)?;
             let title = extract_title(&text);
             println!("Created: {} ({})", title, record.record_name);
         }
 
         Commands::AddText(cmd) => {
+            command_log(
+                1,
+                format!(
+                    "add-text mode={:?} id={:?} title={:?} header={:?}",
+                    cmd.mode, cmd.id, cmd.title, cmd.header
+                ),
+            );
             let ck = load_ck()?;
             let record_name = resolve_note_id(cmd.id.as_deref(), cmd.title.as_deref(), &ck)?;
             let new_text = read_text(cmd.text)?;
@@ -423,6 +503,15 @@ pub fn run() -> Result<()> {
             // Fetch current content
             let note = ck.fetch_note(&record_name)?;
             let current = note.str_field("textADP").unwrap_or("").to_string();
+            verbose::eprintln(
+                2,
+                format!(
+                    "[runner] add-text target={} current_len={} new_fragment_len={}",
+                    record_name,
+                    current.len(),
+                    new_text.len()
+                ),
+            );
 
             let updated = match cmd.mode {
                 AddTextMode::ReplaceAll => new_text,
@@ -446,6 +535,16 @@ pub fn run() -> Result<()> {
         }
 
         Commands::AddFile(cmd) => {
+            command_log(
+                1,
+                format!(
+                    "add-file file={} id={:?} title={:?} mode={:?}",
+                    cmd.file.display(),
+                    cmd.id,
+                    cmd.title,
+                    cmd.mode
+                ),
+            );
             let ck = load_ck()?;
             let record_name = resolve_note_id(cmd.id.as_deref(), cmd.title.as_deref(), &ck)?;
             let filename = cmd
@@ -457,6 +556,15 @@ pub fn run() -> Result<()> {
                 })
                 .ok_or_else(|| anyhow!("--filename required when file path has no name"))?;
             let data = std::fs::read(&cmd.file)?;
+            verbose::eprintln(
+                2,
+                format!(
+                    "[runner] add-file target={} filename={} bytes={}",
+                    record_name,
+                    filename,
+                    data.len()
+                ),
+            );
             let position = match cmd.mode {
                 AddFileMode::Append => AttachPosition::Append,
                 AddFileMode::Prepend => AttachPosition::Prepend,
@@ -466,6 +574,7 @@ pub fn run() -> Result<()> {
         }
 
         Commands::Trash(cmd) => {
+            command_log(1, format!("trash id={:?} title={:?}", cmd.id, cmd.search));
             let ck = load_ck()?;
             let record_name = resolve_note_id(cmd.id.as_deref(), cmd.search.as_deref(), &ck)?;
             load_ck()?.trash_note(&record_name)?;
@@ -473,6 +582,7 @@ pub fn run() -> Result<()> {
         }
 
         Commands::Delete(cmd) => {
+            command_log(1, format!("delete id={:?} title={:?}", cmd.id, cmd.search));
             let ck = load_ck()?;
             let record_name = resolve_note_id(cmd.id.as_deref(), cmd.search.as_deref(), &ck)?;
             ck.delete_note(&record_name)?;
@@ -480,6 +590,7 @@ pub fn run() -> Result<()> {
         }
 
         Commands::Archive(cmd) => {
+            command_log(1, format!("archive id={:?} title={:?}", cmd.id, cmd.search));
             let ck = load_ck()?;
             let record_name = resolve_note_id(cmd.id.as_deref(), cmd.search.as_deref(), &ck)?;
             load_ck()?.archive_note(&record_name)?;
@@ -487,68 +598,105 @@ pub fn run() -> Result<()> {
         }
 
         Commands::RenameTag(cmd) => {
+            command_log(
+                1,
+                format!("rename-tag old={} new={}", cmd.name, cmd.new_name),
+            );
             let ck = load_ck()?;
-            let tag_uuid = resolve_tag_id(&cmd.name, &ck)?;
-            let record = ck.fetch_tag(&tag_uuid)?;
-            let change_tag = record
-                .record_change_tag
-                .clone()
-                .ok_or_else(|| anyhow!("tag record has no recordChangeTag"))?;
-            let mut fields = crate::cloudkit::models::Fields::new();
-            fields.insert(
-                "title".into(),
-                crate::cloudkit::models::CkField::string(&cmd.new_name),
+            let mut updated = 0usize;
+
+            for note in ck.list_notes(false, false, None)? {
+                if !note
+                    .string_list_field("tagsStrings")
+                    .iter()
+                    .any(|tag| tag == &cmd.name)
+                {
+                    continue;
+                }
+
+                let full_note = ck.fetch_note(&note.record_name)?;
+                verbose::eprintln(
+                    2,
+                    format!(
+                        "[runner] rename-tag rewriting note={}",
+                        full_note.record_name
+                    ),
+                );
+                let old_text = full_note.str_field("textADP").unwrap_or("");
+                let new_text = replace_tag_in_text(old_text, &cmd.name, &cmd.new_name);
+                let tag_names = rename_tag_names(&full_note, &cmd.name, &cmd.new_name);
+                let tag_uuids = ck.resolve_tag_record_names(&tag_names, true)?;
+                ck.update_note(
+                    &full_note.record_name,
+                    &new_text,
+                    Some(tag_uuids),
+                    Some(tag_names),
+                )?;
+                updated += 1;
+            }
+
+            if let Some(old_tag) = ck.find_tag_record_name(&cmd.name)? {
+                verbose::eprintln(
+                    2,
+                    format!(
+                        "[runner] rename-tag deleting old tag record={}",
+                        old_tag.record_name
+                    ),
+                );
+                ck.delete_tag(&old_tag.record_name)?;
+            }
+            println!(
+                "Renamed tag '{}' → '{}' in {} note(s)",
+                cmd.name, cmd.new_name, updated
             );
-            fields.insert(
-                "sf_modificationDate".into(),
-                crate::cloudkit::models::CkField::timestamp(crate::cloudkit::client::now_ms()),
-            );
-            ck.modify(vec![crate::cloudkit::models::ModifyOperation {
-                operation_type: "update".into(),
-                record_type: "SFNoteTag".into(),
-                record: crate::cloudkit::models::CkRecord {
-                    record_name: tag_uuid,
-                    record_type: "SFNoteTag".into(),
-                    zone_id: None,
-                    fields,
-                    plugin_fields: std::collections::HashMap::new(),
-                    record_change_tag: Some(change_tag),
-                    created: record.created.clone(),
-                    modified: record.modified.clone(),
-                    deleted: false,
-                    server_error_code: None,
-                    reason: None,
-                },
-            }])?;
-            println!("Renamed tag '{}' → '{}'", cmd.name, cmd.new_name);
         }
 
         Commands::DeleteTag(cmd) => {
+            command_log(1, format!("delete-tag name={}", cmd.name));
             let ck = load_ck()?;
-            let tag_uuid = resolve_tag_id(&cmd.name, &ck)?;
-            let record = ck.fetch_tag(&tag_uuid)?;
-            let change_tag = record
-                .record_change_tag
-                .clone()
-                .ok_or_else(|| anyhow!("tag record has no recordChangeTag"))?;
-            ck.modify(vec![crate::cloudkit::models::ModifyOperation {
-                operation_type: "delete".into(),
-                record_type: "SFNoteTag".into(),
-                record: crate::cloudkit::models::CkRecord {
-                    record_name: tag_uuid,
-                    record_type: "SFNoteTag".into(),
-                    zone_id: None,
-                    fields: std::collections::HashMap::new(),
-                    plugin_fields: std::collections::HashMap::new(),
-                    record_change_tag: Some(change_tag),
-                    created: record.created.clone(),
-                    modified: record.modified.clone(),
-                    deleted: true,
-                    server_error_code: None,
-                    reason: None,
-                },
-            }])?;
-            println!("Deleted tag '{}'", cmd.name);
+            let mut updated = 0usize;
+
+            for note in ck.list_notes(false, false, None)? {
+                if !note
+                    .string_list_field("tagsStrings")
+                    .iter()
+                    .any(|tag| tag == &cmd.name)
+                {
+                    continue;
+                }
+
+                let full_note = ck.fetch_note(&note.record_name)?;
+                verbose::eprintln(
+                    2,
+                    format!(
+                        "[runner] delete-tag rewriting note={}",
+                        full_note.record_name
+                    ),
+                );
+                let old_text = full_note.str_field("textADP").unwrap_or("");
+                let new_text = remove_tag_from_text(old_text, &cmd.name);
+                let tag_names = remove_tag_names(&full_note, &cmd.name);
+                let tag_uuids = ck.resolve_tag_record_names(&tag_names, false)?;
+                ck.update_note(
+                    &full_note.record_name,
+                    &new_text,
+                    Some(tag_uuids),
+                    Some(tag_names),
+                )?;
+                updated += 1;
+            }
+
+            if let Some(tag) = ck.find_tag_record_name(&cmd.name)? {
+                verbose::eprintln(
+                    2,
+                    format!(
+                        "[runner] delete-tag deleting tag record={}",
+                        tag.record_name
+                    ),
+                );
+                ck.delete_tag(&tag.record_name)?;
+            }
+            println!("Deleted tag '{}' from {} note(s)", cmd.name, updated);
         }
     }
 
@@ -558,16 +706,29 @@ pub fn run() -> Result<()> {
 // ── Helpers ───────────────────────────────────────────────────────────────────
 
 fn load_ck() -> Result<CloudKitClient> {
+    verbose::eprintln(2, "[runner] loading CloudKit auth config");
     let auth = AuthConfig::load()?;
     CloudKitClient::new(auth)
 }
 
 fn resolve_note_id(id: Option<&str>, title: Option<&str>, ck: &CloudKitClient) -> Result<String> {
     if let Some(id) = id {
+        verbose::eprintln(
+            2,
+            format!("[runner] resolved note directly from --id: {id}"),
+        );
         return Ok(id.to_string());
     }
     if let Some(title) = title {
-        return resolve_note_by_title(title, ck).map(|note| note.record_name);
+        let note = resolve_note_by_title(title, ck)?;
+        verbose::eprintln(
+            1,
+            format!(
+                "[runner] resolved note title {:?} -> {}",
+                title, note.record_name
+            ),
+        );
+        return Ok(note.record_name);
     }
     bail!("provide --id or --title to identify the note")
 }
@@ -580,9 +741,17 @@ fn resolve_note(
     ck: &CloudKitClient,
 ) -> Result<CkRecord> {
     if let Some(id) = id {
+        verbose::eprintln(2, format!("[runner] fetching note by id={id}"));
         return ck.fetch_note(id);
     }
     if let Some(title) = title {
+        verbose::eprintln(
+            2,
+            format!(
+                "[runner] resolving note by title={title:?} include_trashed={} include_archived={}",
+                include_trashed, include_archived
+            ),
+        );
         return resolve_note_by_title_with_flags(title, include_trashed, include_archived, ck);
     }
     bail!("provide --id or --title")
@@ -598,19 +767,27 @@ fn resolve_note_by_title_with_flags(
     include_archived: bool,
     ck: &CloudKitClient,
 ) -> Result<CkRecord> {
-    ck.list_notes(include_trashed, include_archived, None)?
+    let matches = ck
+        .list_notes(include_trashed, include_archived, None)?
         .into_iter()
         .filter(|note| note.str_field("title") == Some(title))
+        .collect::<Vec<_>>();
+    verbose::eprintln(
+        1,
+        format!(
+            "[runner] title lookup {:?} matched {} note(s)",
+            title,
+            matches.len()
+        ),
+    );
+    matches
+        .into_iter()
         .max_by_key(|note| note.i64_field("sf_modificationDate").unwrap_or(0))
         .ok_or_else(|| anyhow!("note not found"))
 }
 
-fn resolve_tag_id(name: &str, ck: &CloudKitClient) -> Result<String> {
-    ck.list_tags()?
-        .into_iter()
-        .find(|tag| tag.str_field("title") == Some(name))
-        .map(|tag| tag.record_name)
-        .ok_or_else(|| anyhow!("tag not found: {name}"))
+fn command_log(level: u8, message: impl AsRef<str>) {
+    verbose::eprintln(level, format!("[runner] {}", message.as_ref()));
 }
 
 fn read_text(arg: Option<String>) -> Result<String> {
@@ -656,6 +833,128 @@ fn split_csv(input: &str) -> Vec<String> {
         .filter(|s| !s.is_empty())
         .map(ToOwned::to_owned)
         .collect()
+}
+
+fn tag_marker(name: &str) -> String {
+    if name.contains(' ') {
+        format!("#{name}#")
+    } else {
+        format!("#{name}")
+    }
+}
+
+fn replace_tag_in_text(text: &str, old_name: &str, new_name: &str) -> String {
+    rewrite_tags(text, |tag| {
+        if tag == old_name {
+            Some(Some(new_name.to_string()))
+        } else {
+            None
+        }
+    })
+}
+
+fn remove_tag_from_text(text: &str, name: &str) -> String {
+    rewrite_tags(text, |tag| if tag == name { Some(None) } else { None })
+}
+
+fn rename_tag_names(note: &CkRecord, old_name: &str, new_name: &str) -> Vec<String> {
+    note.string_list_field("tagsStrings")
+        .into_iter()
+        .map(|tag| {
+            if tag == old_name {
+                new_name.to_string()
+            } else {
+                tag
+            }
+        })
+        .fold(Vec::new(), dedup_push)
+}
+
+fn remove_tag_names(note: &CkRecord, name: &str) -> Vec<String> {
+    note.string_list_field("tagsStrings")
+        .into_iter()
+        .filter(|tag| tag != name)
+        .collect()
+}
+
+fn dedup_push(mut values: Vec<String>, value: String) -> Vec<String> {
+    if !values.iter().any(|existing| existing == &value) {
+        values.push(value);
+    }
+    values
+}
+
+fn rewrite_tags<F>(text: &str, mut rewrite: F) -> String
+where
+    F: FnMut(&str) -> Option<Option<String>>,
+{
+    text.lines()
+        .filter_map(|line| {
+            let mut out = String::with_capacity(line.len());
+            let mut i = 0;
+
+            while i < line.len() {
+                let remainder = &line[i..];
+                if !remainder.starts_with('#') {
+                    let ch = remainder.chars().next().unwrap();
+                    out.push(ch);
+                    i += ch.len_utf8();
+                    continue;
+                }
+
+                if let Some((raw, name)) = parse_tag_at(remainder) {
+                    match rewrite(name) {
+                        Some(Some(replacement)) => out.push_str(&tag_marker(&replacement)),
+                        Some(None) => {}
+                        None => out.push_str(raw),
+                    }
+                    i += raw.len();
+                } else {
+                    out.push('#');
+                    i += 1;
+                }
+            }
+
+            let out = out.trim_end().to_string();
+            let trimmed = out.trim();
+            if trimmed.is_empty() && line.trim_start().starts_with('#') {
+                None
+            } else {
+                Some(out)
+            }
+        })
+        .collect::<Vec<_>>()
+        .join("\n")
+}
+
+fn parse_tag_at(input: &str) -> Option<(&str, &str)> {
+    let bytes = input.as_bytes();
+    if bytes.first().copied() != Some(b'#') {
+        return None;
+    }
+    if bytes
+        .get(1)
+        .copied()
+        .is_some_and(|b| b == b' ' || b == b'#')
+    {
+        return None;
+    }
+
+    if let Some(close_offset) = input[1..].find('#') {
+        let close = close_offset + 1;
+        let candidate = &input[1..close];
+        if candidate.contains(' ') && candidate == candidate.trim() && !candidate.is_empty() {
+            return Some((&input[..=close], candidate));
+        }
+    }
+
+    let end = input.find(char::is_whitespace).unwrap_or(input.len());
+    let candidate = &input[1..end];
+    if candidate.is_empty() {
+        None
+    } else {
+        Some((&input[..end], candidate))
+    }
 }
 
 fn note_matches_optional_search(note: &CkRecord, search: Option<&str>) -> bool {
@@ -944,4 +1243,54 @@ fn make_snippet(text: &str, text_lower: &str, term: &str) -> String {
         return text[start..end].replace('\n', " ").trim().to_string();
     }
     text.lines().next().unwrap_or("").trim().to_string()
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::cloudkit::models::{CkField, CkRecord};
+
+    #[test]
+    fn replace_tag_in_text_updates_plain_and_spaced_tags() {
+        assert_eq!(
+            replace_tag_in_text("# tag\n#old #old name#\nbody", "old", "new"),
+            "# tag\n#new #old name#\nbody"
+        );
+        assert_eq!(
+            replace_tag_in_text("#old name# and #old", "old name", "new name"),
+            "#new name# and #old"
+        );
+    }
+
+    #[test]
+    fn remove_tag_from_text_removes_standalone_and_inline_tags() {
+        assert_eq!(
+            remove_tag_from_text("# Title\n#keep #drop\nbody #drop", "drop"),
+            "# Title\n#keep\nbody"
+        );
+    }
+
+    #[test]
+    fn rename_tag_names_rewrites_and_dedups() {
+        let mut note = CkRecord {
+            record_name: "NOTE".into(),
+            record_type: "SFNote".into(),
+            zone_id: None,
+            fields: std::collections::HashMap::new(),
+            plugin_fields: std::collections::HashMap::new(),
+            record_change_tag: None,
+            created: None,
+            modified: None,
+            deleted: false,
+            server_error_code: None,
+            reason: None,
+        };
+        note.fields.insert(
+            "tagsStrings".into(),
+            CkField::string_list(vec!["old".into(), "keep".into(), "old".into()]),
+        );
+
+        let names = rename_tag_names(&note, "old", "new");
+        assert_eq!(names, vec!["new", "keep"]);
+    }
 }
