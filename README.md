@@ -2,6 +2,14 @@
 
 `bear-cli` is a native Rust CLI for [Bear](https://bear.app) that talks directly to Bear's CloudKit container.
 
+## Status
+
+The current crate is a CloudKit-backed CLI and does not yet match Bear.app's
+native `bearcli` binary.
+
+Reverse-engineering notes and a parity roadmap live in
+[`docs/bearcli-parity.md`](docs/bearcli-parity.md).
+
 ## Features
 
 - authenticate with Bear's CloudKit web flow
@@ -134,6 +142,8 @@ bear delete-tag old-tag
 - The CloudKit API token used by this project was reverse-engineered from Bear Web's public frontend bundle.
 - The auth flow is browser-sensitive. Safari is the preferred path on macOS.
 - Some large-note edge cases may still require additional CloudKit asset-handling work if Bear stores note bodies outside `textADP`.
+- Matching Bear.app's native `bearcli` will require a local-store backend and
+  native command-surface parity in addition to the current CloudKit support.
 
 ## Development
 

@@ -1,10 +1,23 @@
-mod cli;
-pub mod cloudkit;
 pub mod config;
-mod dates;
-mod export;
+pub mod dates;
+pub mod db;
+pub mod export;
 pub mod frontmatter;
-mod runner;
+pub mod model;
+pub mod notify;
+pub mod output;
+pub mod prefs;
+pub mod search;
+pub mod store;
 pub mod verbose;
 
-pub use runner::run;
+pub(crate) mod cli;
+pub(crate) mod mcp;
+pub(crate) mod runner;
+
+pub use model::{Attachment, Note, PinRecord, Tag};
+pub use store::SqliteStore;
+
+pub fn run() -> anyhow::Result<()> {
+    runner::run()
+}

@@ -1,7 +1,7 @@
 [package]
 name = "bear-cli"
-version = "0.3.3"
-description = "A native Rust CLI for Bear.app on macOS — SQLite for reads, CloudKit REST API for writes"
+version = "0.4.0"
+description = "A Rust CLI for Bear.app — local SQLite backend, full bearcli command parity"
 edition = "2024"
 rust-version = "1.85"
 license = "MIT"
@@ -9,22 +9,22 @@ readme = "README.md"
 documentation = "https://docs.rs/bear-cli"
 repository = "https://github.com/BIRSAx2/bear-cli"
 homepage = "https://github.com/BIRSAx2/bear-cli"
-keywords = ["bear", "notes", "cli", "macos"]
+keywords = ["bear", "notes", "cli", "macos", "sqlite"]
 categories = ["command-line-utilities"]
 include = ["src/**", "Cargo.toml", "Cargo.lock", "README.md", "LICENSE"]
 default-run = "bear"
 
 [dependencies]
-anyhow = "1.0"
-base64 = "0.22"
-chrono = { version = "0.4", default-features = false, features = ["clock", "std"] }
-clap = { version = "4.5", features = ["derive", "env"] }
-serde = { version = "1.0", features = ["derive"] }
+anyhow   = "1.0"
+base64   = "0.22"
+chrono   = { version = "0.4", default-features = false, features = ["clock", "std"] }
+clap     = { version = "4.5", features = ["derive", "env"] }
+plist    = "1.7"
+rusqlite = { version = "0.31", features = ["bundled"] }
+serde      = { version = "1.0", features = ["derive"] }
 serde_json = "1.0"
-reqwest = { version = "0.12", features = ["blocking", "json"] }
-uuid = { version = "1.0", features = ["v4"] }
-plist = "1.7"
-tiny_http = "0.12"
+sha2     = "0.10"
+uuid     = { version = "1.0", features = ["v4"] }
 
 [[bin]]
 name = "bear"

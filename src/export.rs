@@ -4,6 +4,7 @@ use std::path::{Path, PathBuf};
 use anyhow::{Context, Result};
 
 use crate::frontmatter::{FrontMatter, parse_front_matter};
+use crate::model::Note;
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct ExportNote {
@@ -14,6 +15,34 @@ pub struct ExportNote {
     pub created_at: Option<i64>,
     pub modified_at: Option<i64>,
     pub tags: Vec<String>,
+}
+
+impl From<Note> for ExportNote {
+    fn from(n: Note) -> Self {
+        ExportNote {
+            identifier: n.id,
+            title: n.title,
+            text: n.text,
+            pinned: n.pinned,
+            created_at: Some(n.created),
+            modified_at: Some(n.modified),
+            tags: n.tags,
+        }
+    }
+}
+
+impl From<&Note> for ExportNote {
+    fn from(n: &Note) -> Self {
+        ExportNote {
+            identifier: n.id.clone(),
+            title: n.title.clone(),
+            text: n.text.clone(),
+            pinned: n.pinned,
+            created_at: Some(n.created),
+            modified_at: Some(n.modified),
+            tags: n.tags.clone(),
+        }
+    }
 }
 
 pub fn export_notes(
