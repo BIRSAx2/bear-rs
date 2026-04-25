@@ -1,6 +1,6 @@
 [package]
 name = "bear-rs"
-version = "0.1.0"
+version = "0.1.q"
 description = "Rust library for reading and writing Bear.app notes via the local SQLite database"
 edition = "2024"
 rust-version = "1.85"
